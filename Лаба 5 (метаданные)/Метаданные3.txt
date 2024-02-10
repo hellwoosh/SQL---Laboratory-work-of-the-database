@@ -1,0 +1,136 @@
+CREATE TABLE public.spec
+(
+    id          integer,
+    TableName varchar,
+    ColumnName varchar,
+    CurrentMaxValue   integer
+);
+
+INSERT INTO spec(id, TableName,  ColumnName, CurrentMaxValue )
+VALUES (1, 'spec' , 'id' , 1);
+
+create or replace function update_max_in_test_table()
+returns trigger 
+as 
+$$
+	declare new_value integer;
+	begin 
+	EXECUTE format('SELECT MAX(%s) FROM NEW ', tg_argv[1]) INTO new_value;
+	update spec
+		set CurrentMaxValue = new_value
+		where (TableName = tg_argv[0] and ColumnName = tg_argv[1] and CurrentMaxValue < new_value);
+	return null;
+	end
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION Search_Inc(IN TableNameIN spec.TableName%type,IN ColumnNameIN spec.ColumnName%type, OUT Res integer)
+    AS
+    $$
+   	DECLARE count_trig integer;
+    DECLARE new_id integer;
+    DECLARE name_trig1 varchar;
+    DECLARE name_trig2 varchar;
+  
+    BEGIN
+
+        ASSERT EXISTS(SELECT * FROM information_schema.tables
+                        WHERE table_name = TableNameIN), 'Такой таблицы не существует';
+        ASSERT EXISTS(SELECT * FROM information_schema.columns
+                        WHERE table_name = TableNameIN AND column_name = ColumnNameIN), 'Такого столбца не существует';
+        ASSERT EXISTS(SELECT * FROM information_schema.columns
+                        WHERE table_name = TableNameIN AND column_name = ColumnNameIN AND data_type = 'integer'), 'Не целочисленный тип данных';
+
+        UPDATE spec
+        SET CurrentMaxValue = CurrentMaxValue+1
+        WHERE spec.TableName = TableNameIN and spec.ColumnName = ColumnNameIN
+        RETURNING CurrentMaxValue INTO Res;
+        IF Res IS NULL THEN
+            new_id = Search_Inc('spec','id');
+            EXECUTE FORMAT('SELECT COALESCE(MAX(%s) + 1, 1) FROM %s ', quote_ident(ColumnNameIN), quote_ident(TableNameIN))
+                INTO Res;
+            INSERT INTO spec (id, TableName,  ColumnName, CurrentMaxValue )
+                VALUES (new_id, TableNameIN, ColumnNameIN, Res);
+
+            SELECT count(*) + 1 FROM information_schema.triggers
+            WHERE event_object_table = TableNameIN
+            INTO count_trig;
+
+            name_trig1 = concat ((TableNameIN), '_', (ColumnNameIN), '_', CAST(count_trig AS varchar));
+            IF EXISTS (SELECT * FROM information_schema.triggers
+                        WHERE trigger_name =quote_ident(name_trig1)) THEN
+          	  name_trig1 = concat(name_trig1, '_', CAST((SELECT CURRENT_TIMESTAMP) AS varchar));
+            END IF;
+            EXECUTE FORMAT('CREATE TRIGGER %s
+                            AFTER INSERT ON %s
+                            REFERENCING NEW TABLE AS NEW
+                            FOR EACH STATEMENT
+                            EXECUTE FUNCTION update_max_in_test_table(%s,%s);', quote_ident(name_trig1), quote_ident(TableNameIN),
+                                            quote_ident(TableNameIN), quote_ident(ColumnNameIN));
+
+            name_trig2 = concat ((TableNameIN), '_', (ColumnNameIN), '_', CAST((count_trig + 1) AS varchar));
+            IF EXISTS (SELECT * FROM information_schema.triggers
+                        WHERE trigger_name = quote_ident(name_trig2)) THEN
+              name_trig2 = concat(name_trig2, '_', CAST((SELECT CURRENT_TIMESTAMP) AS varchar));
+            END IF;
+            EXECUTE FORMAT('CREATE TRIGGER %s
+                            AFTER UPDATE ON %s
+                            REFERENCING NEW TABLE AS NEW
+                            FOR EACH STATEMENT
+                            EXECUTE FUNCTION update_max_in_test_table(%s,%s);', quote_ident(name_trig2),
+                                             quote_ident(TableNameIN),
+                                            quote_ident(TableNameIN), quote_ident(ColumnNameIN));
+        END IF;
+    END
+    $$
+    LANGUAGE plpgsql;
+
+-- ОШИБКА: Такой таблицы не существует
+SELECT Search_Inc('test', 'id');
+
+-- ОШИБКА: Такого столбца не существует
+SELECT Search_Inc('spec', 'id1');
+
+-- ОШИБКА: Не целочисленный тип данных
+SELECT Search_Inc('spec', 'tablename');
+-- Создание таблиц и триггеров
+CREATE TABLE test(
+    id integer,
+    num_value1 integer
+);
+CREATE OR REPLACE FUNCTION trig_function()
+RETURNS TRIGGER
+AS
+$$
+    BEGIN
+    RETURN NULL;
+    END
+$$
+LANGUAGE plpgsql;
+CREATE TRIGGER trigger1
+    AFTER DELETE ON test
+    EXECUTE FUNCTION trig_function();
+SELECT Search_Inc('test', 'id');
+SELECT trigger_name FROM information_schema.triggers
+WHERE event_object_table = 'test';
+
+--новое имя
+CREATE TABLE test2(
+    id integer,
+    num_value1 integer
+);
+--Создаем триггер с уже имеющимя названием
+CREATE TRIGGER test2_id_2
+    AFTER DELETE ON test2
+    EXECUTE FUNCTION trig_function();
+SELECT  Search_Inc('test2', 'id');
+SELECT trigger_name FROM information_schema.triggers
+WHERE event_object_table = 'test2';
+
+
+DROP TABLE spec;
+DROP TABLE test;
+DROP TABLE test2;
+DROP FUNCTION trig_function();
+DROP FUNCTION Search_Inc(TableNameIN varchar, ColumnNameIN varchar);
+drop function update_max_in_test_table();
+

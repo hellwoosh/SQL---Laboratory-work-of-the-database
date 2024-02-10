@@ -1,0 +1,131 @@
+--1. Создание спец таблицы
+CREATE TABLE SpecTable
+(
+    id INT PRIMARY KEY,
+    TableName VARCHAR NOT NULL,
+    ColumnName VARCHAR NOT NULL,
+    CurrentMaxValue INT NOT NULL
+);
+--2. Добавление в спец. таблицу записи (1, spec, id, 1).
+INSERT INTO SpecTable VALUES(1,'spec','id',1);
+--3. Создание хранимой процедуры (ХП).
+
+create or replace function update_max_in_test_table()
+returns trigger 
+as 
+$$
+	declare new_value INT;
+	begin 
+	EXECUTE format('SELECT MAX(%s) FROM NEW ', quote_ident(tg_argv[1])) INTO new_value;
+	update SpecTable
+		set CurrentMaxValue = new_value
+		where (TableName = tg_argv[0] and ColumnName = tg_argv[1] and CurrentMaxValue < new_value);
+	--execute format('UPDATE SpecTable SET CurrentMaxValue=(SELECT MAX(%s) FROM NEW) WHERE (TableName=%s and ColumnName=%s and CurrentMaxValue<(SELECT MAX(%s) FROM NEW))',quote_ident(tg_argv[1]),quote_ident(tg_argv[0]),quote_ident(tg_argv[0]),quote_ident(tg_argv[0]));
+	return null;
+	--execute format('UPDATE SpecTable SET CurrentMaxValue=(SELECT MAX(%s) FROM NEW) WHERE (TableName=tg_argv[0] and ColumnName=tg_argv[1] and CurrentMaxValue<(SELECT MAX(%s) FROM NEW))',tg_argv[1],tg_argv[1]);
+	end
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION Search_Inc(IN TableNameIN varchar,IN ColumnNameIN varchar, OUT Res int) AS 
+$$
+    DECLARE name_trig1 varchar;
+    DECLARE name_trig2 varchar;
+BEGIN
+	IF
+		EXISTS(SELECT * FROM SpecTable WHERE TableName = TableNameIN AND ColumnName = ColumnNameIN) 
+	THEN
+		UPDATE SpecTable SET CurrentMaxValue = CurrentMaxValue+1
+        WHERE TableName = TableNameIN AND	ColumnName = ColumnNameIN
+        RETURNING CurrentMaxValue INTO Res;
+	ELSE
+	EXECUTE format('SELECT COALESCE(max(%I)+1,1) FROM %I ', ColumnNameIN,TableNameIN) INTO Res;
+	INSERT INTO SpecTable(id, TableName, ColumnName, CurrentMaxValue)
+    VALUES(Search_Inc('spec', 'id'), (TableNameIN), (ColumnNameIN), Res); 
+   	name_trig1 = concat ('insert_', quote_ident(TableNameIN), '_', quote_ident(ColumnNameIN), '_trigger');
+   	EXECUTE FORMAT('CREATE TRIGGER %s
+                            AFTER INSERT ON %s
+                            REFERENCING NEW TABLE AS NEW
+                            FOR EACH STATEMENT
+                            EXECUTE FUNCTION update_max_in_test_table(%s,%s);', quote_ident(name_trig1), quote_ident(TableNameIN ),
+                                            quote_ident(TableNameIN), quote_ident(ColumnNameIN));
+    name_trig2 = concat ('update_', quote_ident(TableNameIN ), '_', quote_ident(ColumnNameIN), '_trigger');
+    EXECUTE FORMAT('CREATE TRIGGER %s
+                            AFTER UPDATE  ON %s
+                            REFERENCING NEW TABLE AS NEW
+                            FOR EACH STATEMENT
+                            EXECUTE FUNCTION update_max_in_test_table(%s,%s);', quote_ident(name_trig2),
+                                             quote_ident(TableNameIN),
+                                            quote_ident(TableNameIN), quote_ident(ColumnNameIN));
+   	END IF;
+ 	
+        
+
+END;
+$$ LANGUAGE plpgsql;
+
+
+--Создание таблицы с одним полем 
+CREATE TABLE test
+(
+    id INT NOT NULL
+);
+
+--Вывод таблицы 
+SELECT * FROM spectable;
+--Добавляем знчение 12
+INSERT INTO test VALUES (12);
+--Запускаем ХП от test
+SELECT Search_Inc('test','id');
+--Добавляем знчение 20
+INSERT INTO test VALUES (20);
+--Добавляем сразу 2 знаения 
+INSERT INTO test VALUES (40), (30);
+--Запускаем ХП от test
+SELECT Search_Inc('test','id');
+--Вставляем знаяения, которые меньше текущих
+INSERT INTO test VALUES (1), (2);
+--Изменение данных при помщи Update
+UPDATE test
+SET id = 50;
+SELECT * FROM spectable ;
+--Запускаем ХП от test
+SELECT Search_Inc('test','id');
+--Вывод значений таблицы 
+SELECT * FROM spectable;
+
+--Создаем новую таблицу с столбцами 'num_value1', 'num_value2'
+CREATE TABLE test2
+(
+    num_value1 INT NOT NULL,
+    num_value2 INT NOT NULL
+);
+--Вставка значений
+INSERT INTO test2 VALUES (20, 30);
+--Запус ХП от num_value2
+SELECT Search_Inc('test2', 'num_value2');
+--Запус ХП от num_value1
+SELECT Search_Inc('test2','num_value1');
+распечатка спец. таблицы
+SELECT * FROM test2;
+--Изменение данных при помщи Update
+UPDATE test2
+SET num_value2 = 30
+WHERE num_value2 = 20;
+SELECT  * FROM spectable;
+вызов ХП с параметрами 'test2' и 'num_value1'
+SELECT Search_Inc('test2','num_value1');
+
+--Вставка значений меньше имеющихся в таблице 
+INSERT INTO test2 VALUES(2, 13);
+SELECT * FROM spectable;
+
+--24. Удаление ХП
+DROP FUNCTION Search_Inc(TableNameIN varchar, ColumnNameIN varchar);
+
+--25. Удаление таблиц
+DROP TABLE SpecTable;
+DROP TABLE test;
+DROP TABLE test2;
+--Удаление вспомогательной функции
+drop function update_max_in_test_table();

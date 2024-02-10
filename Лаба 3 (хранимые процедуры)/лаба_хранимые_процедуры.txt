@@ -1,0 +1,64 @@
+CREATE TABLE spectable (
+id integer primary key,
+tableName varchar,
+columnName varchar,
+maxValue integer
+);
+
+INSERT INTO spectable VALUES (1, 'spec', 'id', 1);
+
+CREATE or replace FUNCTION increment(table_name varchar, column_name varchar) RETURNS integer
+LANGUAGE plpgsql
+AS $$
+declare
+spec_ record;
+BEGIN
+select spectable.id , spectable.maxValue
+from spectable
+where tableName=table_name and columnName=column_name into spec_;
+if spec_.id is null then
+execute format('select max (%s) from %s;',quote_ident(column_name),quote_ident(table_name)) into spec_.maxValue;
+if(spec_.maxValue is null) then
+insert into spectable(id,tableName,columnName,maxValue) values (increment('spec','id'),table_name,column_name,1);
+return 1;
+end if;
+insert into spectable(id,tableName,columnName,maxValue) values (increment('spec','id'),table_name,column_name,(spec_.maxValue+1));
+return (spec_.maxValue+1);
+end if;
+update spectable set maxValue=maxValue+1 where spectable.id=spec_.id returning spectable.maxValue into spec_.maxValue;
+return spec_.maxValue;
+END$$;
+
+select increment('spec','id');
+select *from spectable;
+select increment('spec','id');
+select *from spectable;
+CREATE TABLE test (
+id int NULL
+);
+insert into test (id) values(10);
+select increment('test','id');
+select *from spectable;
+select increment('test','id');
+select *from spectable;
+CREATE TABLE test2(
+num_value1 integer,
+num_value2 integer
+);
+select increment('test2','num_value1');
+select *from spectable;
+select increment('test2','num_value1');
+select *from spectable;
+insert into test2 (num_value1, num_value2) values (2,13);
+select increment('test2','num_value2');
+select *from spectable;
+select increment('test2','num_value1');
+select increment('test2','num_value1');
+select increment('test2','num_value1');
+select increment('test2','num_value1');
+select increment('test2','num_value1');
+select *from spectable;
+DROP FUNCTION increment(table_name varchar, column_name varchar);
+drop table spectable;
+drop table test;
+drop table test2;

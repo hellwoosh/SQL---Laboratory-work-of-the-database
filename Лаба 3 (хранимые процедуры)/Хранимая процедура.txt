@@ -1,0 +1,96 @@
+--1. Создание спец таблицы
+CREATE TABLE SpecTable
+(
+    id INT PRIMARY KEY,
+    TableName VARCHAR NOT NULL,
+    ColumnName VARCHAR NOT NULL,
+    CurrentMaxValue INT NOT NULL
+);
+--2. Добавление в спец. таблицу записи (1, spec, id, 1).
+INSERT INTO SpecTable VALUES(1,'spec','id',1);
+--3. Создание хранимой процедуры (ХП).
+CREATE OR REPLACE FUNCTION Search_Inc(IN TableNameIN varchar,IN ColumnNameIN varchar, OUT Res int) AS 
+$$
+BEGIN
+	IF
+		EXISTS(SELECT * FROM SpecTable WHERE TableName = TableNameIN AND ColumnName = ColumnNameIN) 
+	THEN
+		UPDATE SpecTable SET CurrentMaxValue = CurrentMaxValue+1
+        WHERE TableName = TableNameIN AND	ColumnName = ColumnNameIN
+        RETURNING CurrentMaxValue INTO Res;
+	ELSE
+		EXECUTE format('SELECT COALESCE(max(%I)+1,1) FROM %I ', ColumnNameIN,TableNameIN) INTO Res;
+        INSERT INTO SpecTable(id, TableName, ColumnName, CurrentMaxValue)
+        VALUES(Search_Inc('spec', 'id'), (TableNameIN), (ColumnNameIN), Res); 
+	END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+--4. вызов ХП с параметрами 'spec' и 'id'
+SELECT Search_Inc('spec','id');
+
+--5. распечатка спец. таблицы
+SELECT * FROM spectable;
+
+--6. вызов ХП с параметрами 'spec' и 'id'
+SELECT Search_Inc('spec','id');
+
+--7. распечатка спец. таблицы
+SELECT * FROM spectable;
+
+--8. создаем новую таблицу с одним столбцом 'id'
+CREATE TABLE test
+(
+    id INT NOT NULL
+);
+
+--9. добавляем в таблице test новой записи (10)
+INSERT INTO test VALUES(10);
+
+--10. вызов ХП с параметрами 'test' и 'id'
+SELECT Search_Inc('test','id');
+--11. распечатка спец. таблицы
+SELECT * FROM spectable;
+
+--12. вызов ХП с параметрами 'test' и 'id'
+SELECT Search_Inc('test','id');
+
+--13. распечатка спец. таблицы
+SELECT * FROM spectable;
+
+--14. создаем новую таблицу с столбцами 'num_value1', 'num_value2'
+CREATE TABLE test2
+(
+    num_value1 INT NOT NULL,
+    num_value2 INT NOT NULL
+);
+
+--15. вызов ХП с параметрами 'test2' и 'num_value1'
+SELECT Search_Inc('test2','num_value1');
+
+--16. распечатка спец. таблицы
+SELECT * FROM spectable;
+
+
+--17. вызов ХП с параметрами 'test2' и 'num_value1'
+SELECT Search_Inc('test2','num_value1');
+
+--18. распечатка спец. таблицы
+SELECT * FROM spectable;
+
+--19. добавляем в таблице test2 новой записи (2, 13)
+INSERT INTO test2 VALUES(2, 13);
+
+--20. выхов ХП с параметрами 'test2' и 'num_value2'
+SELECT Search_Inc('test2','num_value2');
+
+--21. распечатка спец. таблицы
+SELECT * FROM spectable;
+
+--22. Удаление ХП
+DROP FUNCTION Search_Inc(TableNameIN varchar, ColumnNameIN varchar);
+
+--23. Удаление таблиц
+DROP TABLE SpecTable;
+DROP TABLE test;
+DROP TABLE test2;
